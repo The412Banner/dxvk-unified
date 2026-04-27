@@ -60,27 +60,35 @@ jobs:
             echo "system32:"; ls "$WCP_STAGE/system32/"
             echo "syswow64:"; ls "$WCP_STAGE/syswow64/"
 
-            # Build profile.json file list
-            FILES_JSON=""
-            for f in "$WCP_STAGE/system32/"*.dll; do
-              name=$(basename "$f")
-              FILES_JSON="${FILES_JSON}{\"source\":\"system32/${name}\",\"target\":\"\${system32}/${name}\"},"
-            done
-            for f in "$WCP_STAGE/syswow64/"*.dll; do
-              name=$(basename "$f")
-              FILES_JSON="${FILES_JSON}{\"source\":\"syswow64/${name}\",\"target\":\"\${syswow64}/${name}\"},"
-            done
-            FILES_JSON="[${FILES_JSON%,}]"
+            # Generate profile.json via Python so ${system32}/${syswow64} are
+            # treated as literal strings and not expanded by the shell
+            python3 - "$WCP_STAGE" "$VERSION_NAME" <<'PYEOF'
+import json, os, sys
 
-            cat > "$WCP_STAGE/profile.json" <<EOF
-            {
-              "type": "DXVK",
-              "versionName": "${VERSION_NAME}",
-              "versionCode": 0,
-              "description": "Unified D3D1-12 to Vulkan: DXVK 2.7.1 (D3D8-11) + VKD3D-Proton 3.0b (D3D12)",
-              "files": ${FILES_JSON}
-            }
-            EOF
+stage = sys.argv[1]
+version = sys.argv[2]
+
+files = []
+for name in sorted(os.listdir(os.path.join(stage, "system32"))):
+    if name.endswith(".dll"):
+        files.append({"source": f"system32/{name}", "target": "${system32}/" + name})
+for name in sorted(os.listdir(os.path.join(stage, "syswow64"))):
+    if name.endswith(".dll"):
+        files.append({"source": f"syswow64/{name}", "target": "${syswow64}/" + name})
+
+profile = {
+    "type": "DXVK",
+    "versionName": version,
+    "versionCode": 0,
+    "description": "Unified D3D1-12 to Vulkan (Upstream: Philip Rebohle / Hans-Kristian Arntzen)",
+    "files": files
+}
+
+with open(os.path.join(stage, "profile.json"), "w") as f:
+    json.dump(profile, f, indent=2)
+
+print(json.dumps(profile, indent=2))
+PYEOF
 
             # Pack: tar then zstd compress → .wcp
             cd build/wcp-stage
