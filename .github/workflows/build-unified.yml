@@ -61,13 +61,11 @@ jobs:
             echo "syswow64:"; ls "$WCP_STAGE/syswow64/"
 
             # Generate profile.json via Python so ${system32}/${syswow64} are
-            # treated as literal strings and not expanded by the shell
-            python3 - "$WCP_STAGE" "$VERSION_NAME" <<'PYEOF'
+            # treated as literal strings and not expanded by the shell.
+            # Written to a .py file first to avoid YAML heredoc conflicts.
+            cat > /tmp/gen_profile.py << 'EOF'
 import json, os, sys
-
-stage = sys.argv[1]
-version = sys.argv[2]
-
+stage, version = sys.argv[1], sys.argv[2]
 files = []
 for name in sorted(os.listdir(os.path.join(stage, "system32"))):
     if name.endswith(".dll"):
@@ -75,7 +73,6 @@ for name in sorted(os.listdir(os.path.join(stage, "system32"))):
 for name in sorted(os.listdir(os.path.join(stage, "syswow64"))):
     if name.endswith(".dll"):
         files.append({"source": f"syswow64/{name}", "target": "${syswow64}/" + name})
-
 profile = {
     "type": "DXVK",
     "versionName": version,
@@ -83,12 +80,11 @@ profile = {
     "description": "Unified D3D1-12 to Vulkan (Upstream: Philip Rebohle / Hans-Kristian Arntzen)",
     "files": files
 }
-
 with open(os.path.join(stage, "profile.json"), "w") as f:
     json.dump(profile, f, indent=2)
-
 print(json.dumps(profile, indent=2))
-PYEOF
+EOF
+            python3 /tmp/gen_profile.py "$WCP_STAGE" "$VERSION_NAME"
 
             # Pack: tar then zstd compress → .wcp
             cd build/wcp-stage
