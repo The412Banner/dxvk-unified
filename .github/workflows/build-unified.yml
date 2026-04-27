@@ -5,6 +5,9 @@ on:
     branches: [vkd3d]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-unified-mingw:
     runs-on: ubuntu-latest
@@ -22,17 +25,14 @@ jobs:
           command: |
             set -e
 
-            export VERSION_NAME="${GITHUB_REF##*/}-${GITHUB_SHA::8}"
+            export VERSION_NAME="dxvk-unified-${GITHUB_SHA::8}"
 
-            # Init only DXVK's own submodules (include/, subprojects/).
-            # Exclude vkd3d-proton/ — its embedded gitlinks have no root .gitmodules entries.
+            # Init only DXVK's own submodules — skip vkd3d-proton/ subtree gitlinks
             git submodule update --init --recursive -- \
               include/native/directx include/vulkan include/spirv \
               subprojects/libdisplay-info subprojects/dxbc-spirv
 
-            # Clone VKD3D-Proton fresh so its nested submodules initialise properly.
-            # The subtree in vkd3d-proton/ is kept as a version reference; the clone
-            # is what we actually build from.
+            # Clone VKD3D-Proton fresh so its nested submodules initialise properly
             git clone --recurse-submodules \
               https://github.com/HansKristian-Work/vkd3d-proton.git \
               vkd3d-proton-src
@@ -47,29 +47,65 @@ jobs:
             cd ..
             mv build/vkd3d-proton-"${VERSION_NAME}" build/vkd3d-out
 
-            # ── Merge into single output dir ──────────────────────────────────
-            MERGED="build/dxvk-unified-${VERSION_NAME}"
-            mkdir -p "$MERGED/x32" "$MERGED/x64"
+            # ── Pack into .wcp (tar + zstd) ───────────────────────────────────
+            WCP_STAGE="build/wcp-stage"
+            mkdir -p "$WCP_STAGE/system32" "$WCP_STAGE/syswow64"
 
-            cp build/dxvk-out/x32/*.dll   "$MERGED/x32/" 2>/dev/null || true
-            cp build/dxvk-out/x64/*.dll   "$MERGED/x64/" 2>/dev/null || true
-            cp build/vkd3d-out/x32/*.dll  "$MERGED/x32/" 2>/dev/null || true
-            cp build/vkd3d-out/x64/*.dll  "$MERGED/x64/" 2>/dev/null || true
+            # x64 → system32, x32 → syswow64
+            cp build/dxvk-out/x64/*.dll   "$WCP_STAGE/system32/" 2>/dev/null || true
+            cp build/vkd3d-out/x64/*.dll  "$WCP_STAGE/system32/" 2>/dev/null || true
+            cp build/dxvk-out/x32/*.dll   "$WCP_STAGE/syswow64/" 2>/dev/null || true
+            cp build/vkd3d-out/x32/*.dll  "$WCP_STAGE/syswow64/" 2>/dev/null || true
 
-            # Copy setup scripts and configs
-            cp vkd3d-proton-src/setup_vkd3d_proton.sh "$MERGED/" 2>/dev/null || true
-            cp dxvk.conf "$MERGED/" 2>/dev/null || true
+            echo "system32:"; ls "$WCP_STAGE/system32/"
+            echo "syswow64:"; ls "$WCP_STAGE/syswow64/"
 
-            # Print manifest
-            echo "=== dxvk-unified ${VERSION_NAME} ==="
-            echo "x32:"; ls "$MERGED/x32/"
-            echo "x64:"; ls "$MERGED/x64/"
+            # Build profile.json file list
+            FILES_JSON=""
+            for f in "$WCP_STAGE/system32/"*.dll; do
+              name=$(basename "$f")
+              FILES_JSON="${FILES_JSON}{\"source\":\"system32/${name}\",\"target\":\"\${system32}/${name}\"},"
+            done
+            for f in "$WCP_STAGE/syswow64/"*.dll; do
+              name=$(basename "$f")
+              FILES_JSON="${FILES_JSON}{\"source\":\"syswow64/${name}\",\"target\":\"\${syswow64}/${name}\"},"
+            done
+            FILES_JSON="[${FILES_JSON%,}]"
 
+            cat > "$WCP_STAGE/profile.json" <<EOF
+            {
+              "type": "DXVK",
+              "versionName": "${VERSION_NAME}",
+              "versionCode": 0,
+              "description": "Unified D3D1-12 to Vulkan: DXVK 2.7.1 (D3D8-11) + VKD3D-Proton 3.0b (D3D12)",
+              "files": ${FILES_JSON}
+            }
+            EOF
+
+            # Pack: tar then zstd compress → .wcp
+            cd build/wcp-stage
+            tar -cf "../${VERSION_NAME}.tar" profile.json system32 syswow64
+            cd ..
+            zstd --ultra -22 "${VERSION_NAME}.tar" -o "${VERSION_NAME}.wcp"
+            rm "${VERSION_NAME}.tar"
+            cd ..
+
+            echo "WCP=build/${VERSION_NAME}.wcp" >> $GITHUB_ENV
             echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+            echo "Built: build/${VERSION_NAME}.wcp ($(du -sh build/${VERSION_NAME}.wcp | cut -f1))"
 
-      - name: Upload unified artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dxvk-unified-${{ env.VERSION_NAME }}
-          path: build/dxvk-unified-${{ env.VERSION_NAME }}
-          if-no-files-found: error
+      - name: Create release and upload .wcp
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ env.VERSION_NAME }}" \
+            --repo "${{ github.repository }}" \
+            --title "${{ env.VERSION_NAME }}" \
+            --notes "Unified Direct3D 1–12 → Vulkan translation layer
+
+          **Contents:**
+          - \`d3d8.dll\` / \`d3d9.dll\` / \`d3d10core.dll\` / \`d3d11.dll\` / \`dxgi.dll\` — DXVK 2.7.1 (D3D8–11)
+          - \`d3d12.dll\` / \`d3d12core.dll\` — VKD3D-Proton 3.0b (D3D12)
+
+          **Install:** drop the \`.wcp\` into BannerHub or Nightlies component list." \
+            "${{ env.WCP }}"
