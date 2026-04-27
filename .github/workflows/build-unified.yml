@@ -1,0 +1,71 @@
+name: Build Unified (D3D1-12)
+
+on:
+  push:
+    branches: [vkd3d]
+  workflow_dispatch:
+
+jobs:
+  build-unified-mingw:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout dxvk-unified
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Build unified package
+        uses: Joshua-Ashton/arch-mingw-github-action@v8
+        with:
+          command: |
+            set -e
+
+            export VERSION_NAME="${GITHUB_REF##*/}-${GITHUB_SHA::8}"
+
+            # Clone VKD3D-Proton fresh so its nested submodules initialise properly.
+            # The subtree in vkd3d-proton/ is kept as a version reference; the clone
+            # is what we actually build from.
+            git clone --recurse-submodules \
+              https://github.com/HansKristian-Work/vkd3d-proton.git \
+              /tmp/vkd3d-proton-src
+
+            # ── Build DXVK (D3D8/9/10/11) ────────────────────────────────────
+            ./package-release.sh "${VERSION_NAME}" /tmp/unified-build --no-package
+            mv /tmp/unified-build/dxvk-"${VERSION_NAME}" /tmp/dxvk-out
+
+            # ── Build VKD3D-Proton (D3D12) ────────────────────────────────────
+            cd /tmp/vkd3d-proton-src
+            ./package-release.sh "${VERSION_NAME}" /tmp/unified-build --no-package
+            mv /tmp/unified-build/vkd3d-proton-"${VERSION_NAME}" /tmp/vkd3d-out
+            cd $GITHUB_WORKSPACE
+
+            # ── Merge outputs ─────────────────────────────────────────────────
+            MERGED="/tmp/unified-build/dxvk-unified-${VERSION_NAME}"
+            mkdir -p "$MERGED/x32" "$MERGED/x64"
+
+            cp /tmp/dxvk-out/x32/*.dll  "$MERGED/x32/" 2>/dev/null || true
+            cp /tmp/dxvk-out/x64/*.dll  "$MERGED/x64/" 2>/dev/null || true
+            cp /tmp/vkd3d-out/x32/*.dll "$MERGED/x32/" 2>/dev/null || true
+            cp /tmp/vkd3d-out/x64/*.dll "$MERGED/x64/" 2>/dev/null || true
+
+            # Copy setup scripts and configs
+            cp setup_vkd3d_proton.sh "$MERGED/" 2>/dev/null || true
+            cp /tmp/vkd3d-proton-src/setup_vkd3d_proton.sh \
+               "$MERGED/setup_vkd3d_proton.sh" 2>/dev/null || true
+            cp dxvk.conf "$MERGED/" 2>/dev/null || true
+
+            # Print manifest
+            echo "=== dxvk-unified ${VERSION_NAME} ==="
+            echo "x32:"; ls "$MERGED/x32/"
+            echo "x64:"; ls "$MERGED/x64/"
+
+            echo "VERSION_NAME=${VERSION_NAME}" >> $GITHUB_ENV
+
+      - name: Upload unified artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dxvk-unified-${{ env.VERSION_NAME }}
+          path: /tmp/unified-build/dxvk-unified-${{ env.VERSION_NAME }}
+          if-no-files-found: error
