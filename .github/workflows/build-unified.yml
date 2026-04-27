@@ -13,7 +13,7 @@ jobs:
       - name: Checkout dxvk-unified
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
           fetch-depth: 0
 
       - name: Build unified package
@@ -23,6 +23,10 @@ jobs:
             set -e
 
             export VERSION_NAME="${GITHUB_REF##*/}-${GITHUB_SHA::8}"
+
+            # Init only DXVK's own submodules (include/, subprojects/).
+            # Exclude vkd3d-proton/ — its embedded gitlinks have no root .gitmodules entries.
+            git submodule update --init --recursive -- include subprojects
 
             # Clone VKD3D-Proton fresh so its nested submodules initialise properly.
             # The subtree in vkd3d-proton/ is kept as a version reference; the clone
