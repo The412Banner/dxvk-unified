@@ -32,8 +32,8 @@ jobs:
               include/native/directx include/vulkan include/spirv \
               subprojects/libdisplay-info subprojects/dxbc-spirv
 
-            # Clone VKD3D-Proton fresh so its nested submodules initialise properly
-            git clone --recurse-submodules \
+            # Clone VKD3D-Proton at v3.0b so the version claim in the release is accurate
+            git clone --recurse-submodules --branch v3.0b \
               https://github.com/HansKristian-Work/vkd3d-proton.git \
               vkd3d-proton-src
 
