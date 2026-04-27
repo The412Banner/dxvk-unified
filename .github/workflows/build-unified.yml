@@ -55,7 +55,9 @@ jobs:
             cp build/dxvk-out/x64/*.dll   "$WCP_STAGE/system32/" 2>/dev/null || true
             cp build/vkd3d-out/x64/*.dll  "$WCP_STAGE/system32/" 2>/dev/null || true
             cp build/dxvk-out/x32/*.dll   "$WCP_STAGE/syswow64/" 2>/dev/null || true
-            cp build/vkd3d-out/x32/*.dll  "$WCP_STAGE/syswow64/" 2>/dev/null || true
+            # VKD3D-Proton has no x32 build; copy x64 d3d12 DLLs into syswow64 as well
+            cp build/vkd3d-out/x64/d3d12.dll      "$WCP_STAGE/syswow64/" 2>/dev/null || true
+            cp build/vkd3d-out/x64/d3d12core.dll  "$WCP_STAGE/syswow64/" 2>/dev/null || true
 
             echo "system32:"; ls "$WCP_STAGE/system32/"
             echo "syswow64:"; ls "$WCP_STAGE/syswow64/"
